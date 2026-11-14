@@ -1,0 +1,370 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0e0f11">
+<title>Бюджет</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon.svg">
+<style>
+:root{--bg:#0e0f11;--card:#16181b;--line:#23262b;--tx:#e8eaed;--mut:#8b9099;--acc:#4ade80;--neg:#f87171}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;padding-bottom:80px}
+#app{max-width:720px;margin:0 auto;padding:12px}
+h3,h4{margin:0 0 10px;font-weight:600}
+small{color:var(--mut)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:12px}
+.big{font-size:30px;font-weight:700;margin:4px 0 12px}
+.row{display:flex;gap:10px;align-items:center}
+.row>div{flex:1}.sp{flex:1}
+.pos{color:var(--acc)}.neg{color:var(--neg)}
+.item{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 0;border-top:1px solid var(--line);cursor:pointer}
+.item:first-of-type{border-top:0}
+.item b{font-weight:500}
+.date{color:var(--mut);font-size:12px;margin:14px 0 2px;text-transform:uppercase}
+button{font:inherit;color:var(--tx);background:#1e2125;border:1px solid var(--line);border-radius:10px;padding:10px 14px;cursor:pointer}
+button.primary{background:var(--acc);color:#052e12;border-color:var(--acc);font-weight:600}
+button.ghost{background:none}
+button.danger{color:var(--neg);background:none}
+.btns{display:flex;gap:8px;margin-bottom:12px}.btns button{flex:1}
+input,select{width:100%;font:inherit;color:var(--tx);background:#0e0f11;border:1px solid var(--line);border-radius:10px;padding:11px;margin-top:4px}
+label{display:block;margin-bottom:10px;color:var(--mut);font-size:13px}
+.month{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;text-transform:capitalize;font-weight:600}
+.bar{height:8px;background:var(--line);border-radius:4px;overflow:hidden;margin-top:6px}
+.bar i{display:block;height:100%;background:var(--acc)}
+.bar i.over{background:var(--neg)}
+.ch{position:relative;height:240px}
+nav{position:fixed;bottom:0;left:0;right:0;background:var(--card);border-top:1px solid var(--line);display:flex;justify-content:center;padding-bottom:env(safe-area-inset-bottom)}
+nav[hidden]{display:none}
+nav button{flex:1;max-width:144px;border:0;background:none;border-radius:0;color:var(--mut);padding:14px 2px;font-size:12px}
+nav button.on{color:var(--acc)}
+dialog{background:var(--card);color:var(--tx);border:1px solid var(--line);border-radius:16px;width:min(420px,92vw);padding:18px}
+dialog::backdrop{background:rgba(0,0,0,.6)}
+code{background:#0e0f11;padding:4px 8px;border-radius:6px;word-break:break-all}
+#err{color:var(--neg);min-height:20px;font-size:13px}
+.login{max-width:360px;margin:12vh auto 0}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<nav id="nav" hidden>
+  <button data-a="tab" data-id="home">Обзор</button>
+  <button data-a="tab" data-id="tx">Операции</button>
+  <button data-a="tab" data-id="budget">Бюджеты</button>
+  <button data-a="tab" data-id="rec">Регулярные</button>
+  <button data-a="tab" data-id="more">Ещё</button>
+</nav>
+<dialog id="dlg"></dialog>
+
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script>
+// ====== ВСТАВЬ СЮДА СВОЙ КОНФИГ ИЗ FIREBASE ======
+const firebaseConfig = {
+  apiKey: "...",
+  authDomain: "...",
+  projectId: "...",
+  appId: "..."
+};
+// =================================================
+
+firebase.initializeApp(firebaseConfig);
+const auth = firebase.auth(), db = firebase.firestore();
+db.enablePersistence({synchronizeTabs:true}).catch(()=>{});
+navigator.serviceWorker?.register('sw.js');
+
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const rub = n => new Intl.NumberFormat('ru-RU',{style:'currency',currency:'RUB',maximumFractionDigits:2}).format(n || 0);
+const p2 = n => String(n).padStart(2,'0');
+const iso = d => `${d.getFullYear()}-${p2(d.getMonth()+1)}-${p2(d.getDate())}`;
+const today = () => iso(new Date());
+const addM = (ym, n) => { const [y,m] = ym.split('-').map(Number); return iso(new Date(y, m-1+n, 1)).slice(0,7); };
+const PAL = ['#4ade80','#60a5fa','#f472b6','#facc15','#a78bfa','#fb923c','#2dd4bf','#f87171','#94a3b8','#c084fc','#34d399','#fbbf24'];
+const TYPES = {expense:'Расход', income:'Доход', transfer:'Перевод'};
+
+let user = null, hid = null, house = null, tab = 'home', month = today().slice(0,7), unsubs = [], charts = [];
+const S = {accounts:[], categories:[], tx:[], recurring:[]};
+const col = n => db.collection('households').doc(hid).collection(n);
+const accName = id => S.accounts.find(a => a.id == id)?.name || '—';
+const catName = id => S.categories.find(c => c.id == id)?.name || '—';
+const monthTx = () => S.tx.filter(t => t.date.startsWith(month));
+const sum = (a, type) => a.filter(t => t.type == type).reduce((s,t) => s + t.amount, 0);
+const balance = a => S.tx.reduce((s,t) =>
+  s + (t.acc == a.id ? (t.type == 'income' ? t.amount : -t.amount) : 0)
+    + (t.type == 'transfer' && t.to == a.id ? t.amount : 0), a.start || 0);
+
+/* ---------- Вход ---------- */
+auth.onAuthStateChanged(async u => {
+  user = u; unsubs.forEach(f => f()); unsubs = []; house = null;
+  if (!u) { $('#nav').hidden = true; return renderLogin(); }
+  $('#app').innerHTML = '<p style="text-align:center;margin-top:30vh"><small>Загрузка…</small></p>';
+  try {
+    const us = await db.collection('users').doc(u.uid).get();
+    hid = us.exists ? us.data().hid : null;
+    if (!hid) await createHouse();
+    listen();
+  } catch (e) { $('#app').innerHTML = `<div class="card">Ошибка: ${esc(e.message)}</div>`; }
+});
+
+function renderLogin() {
+  $('#app').innerHTML = `<div class="login card"><h3>Бюджет</h3>
+    <label>Email<input id="em" type="email" autocomplete="email"></label>
+    <label>Пароль<input id="pw" type="password" autocomplete="current-password"></label>
+    <div id="err"></div>
+    <div class="btns"><button class="primary" data-a="login">Войти</button><button data-a="signup">Регистрация</button></div>
+    <div class="btns"><button data-a="google">Войти через Google</button></div>
+    <button class="ghost" data-a="reset" style="width:100%"><small>Забыл пароль</small></button></div>`;
+}
+const authTry = p => p.catch(e => { const el = $('#err'); if (el) el.textContent = e.message; });
+
+async function createHouse() {
+  const ref = db.collection('households').doc();
+  const name = user.displayName || user.email;
+  await ref.set({members:[user.uid], names:{[user.uid]:name}});
+  hid = ref.id;
+  const b = db.batch();
+  ['Карта','Наличные'].forEach(n => b.set(col('accounts').doc(), {name:n, start:0}));
+  ['Продукты','Транспорт','Жильё','Кафе','Здоровье','Развлечения','Одежда','Подписки','Прочее']
+    .forEach(n => b.set(col('categories').doc(), {name:n, type:'expense', limit:0}));
+  ['Зарплата','Подработка','Прочее'].forEach(n => b.set(col('categories').doc(), {name:n, type:'income', limit:0}));
+  b.set(db.collection('users').doc(user.uid), {hid});
+  await b.commit();
+}
+
+function listen() {
+  $('#nav').hidden = false;
+  unsubs.push(db.collection('households').doc(hid).onSnapshot(d => { house = d.data(); render(); }));
+  Object.keys(S).forEach(n => unsubs.push(col(n).onSnapshot(s => {
+    S[n] = s.docs.map(d => ({id:d.id, ...d.data()}));
+    if (n == 'recurring') runRecurring();
+    render();
+  })));
+}
+
+/* ---------- Регулярные платежи ---------- */
+function nextDate(d, day) {
+  let [y,m] = d.split('-').map(Number); m++; if (m > 12) { m = 1; y++; }
+  return `${y}-${p2(m)}-${p2(Math.min(day, new Date(y, m, 0).getDate()))}`;
+}
+function runRecurring() {
+  const t = today();
+  S.recurring.forEach(r => {
+    let next = r.next, changed = false;
+    while (next && next <= t) {
+      // фиксированный id — два устройства не создадут дубль
+      col('tx').doc(`r_${r.id}_${next}`).set({type:r.type, amount:r.amount, acc:r.acc, cat:r.cat,
+        date:next, note:r.name, by:r.by || user.uid, ts:Date.now(), auto:true});
+      next = nextDate(next, r.day); changed = true;
+    }
+    if (changed) col('recurring').doc(r.id).update({next});
+  });
+}
+
+/* ---------- Экраны ---------- */
+const monthBar = () => `<div class="month"><button class="ghost" data-a="shift" data-id="-1">‹</button>
+  <span>${new Date(month+'-01').toLocaleDateString('ru-RU',{month:'long',year:'numeric'})}</span>
+  <button class="ghost" data-a="shift" data-id="1">›</button></div>`;
+const addBtns = `<div class="btns"><button data-a="add" data-id="expense">− Расход</button>
+  <button data-a="add" data-id="income">+ Доход</button><button data-a="add" data-id="transfer">⇄ Перевод</button></div>`;
+
+const V = {
+  home() {
+    const m = monthTx(), inc = sum(m,'income'), exp = sum(m,'expense');
+    return monthBar() + `<div class="card"><small>Всего на счетах</small>
+      <div class="big">${rub(S.accounts.reduce((s,a) => s + balance(a), 0))}</div>
+      <div class="row"><div><small>Доход</small><div class="pos">+${rub(inc)}</div></div>
+      <div><small>Расход</small><div class="neg">−${rub(exp)}</div></div>
+      <div><small>Итог</small><div>${rub(inc-exp)}</div></div></div></div>` + addBtns +
+      `<div class="card"><h4>Счета</h4>${S.accounts.map(a => `<div class="item" data-a="acc" data-id="${a.id}"><b>${esc(a.name)}</b><span>${rub(balance(a))}</span></div>`).join('')}</div>
+      <div class="card"><h4>Расходы по категориям</h4>${exp ? '<div class="ch"><canvas id="c1"></canvas></div>' : '<small>В этом месяце расходов нет</small>'}</div>
+      <div class="card"><h4>Доходы и расходы за 6 месяцев</h4><div class="ch"><canvas id="c2"></canvas></div></div>`;
+  },
+  tx() {
+    const list = monthTx().sort((a,b) => b.date.localeCompare(a.date) || (b.ts||0) - (a.ts||0));
+    const multi = (house.members || []).length > 1;
+    let last = '', h = monthBar() + addBtns + '<div class="card">';
+    if (!list.length) h += '<small>Операций нет</small>';
+    list.forEach(t => {
+      if (t.date != last) { last = t.date; h += `<div class="date">${new Date(t.date).toLocaleDateString('ru-RU',{day:'numeric',month:'long',weekday:'short'})}</div>`; }
+      const title = t.type == 'transfer' ? `${accName(t.acc)} → ${accName(t.to)}` : catName(t.cat);
+      const sub = [t.type == 'transfer' ? 'Перевод' : accName(t.acc), t.note, multi ? house.names?.[t.by] : ''].filter(Boolean).join(' · ');
+      h += `<div class="item" data-a="edit" data-id="${t.id}"><div><b>${esc(title)}</b><br><small>${esc(sub)}</small></div>
+        <span class="${t.type=='income'?'pos':t.type=='expense'?'neg':''}">${t.type=='income'?'+':t.type=='expense'?'−':''}${rub(t.amount)}</span></div>`;
+    });
+    return h + '</div>';
+  },
+  budget() {
+    const m = monthTx().filter(t => t.type == 'expense');
+    const cats = S.categories.filter(c => c.type == 'expense').map(c => ({...c, spent: m.filter(t => t.cat == c.id).reduce((s,t) => s + t.amount, 0)}));
+    const lim = cats.filter(c => c.limit > 0), tl = lim.reduce((s,c) => s + c.limit, 0), ts = lim.reduce((s,c) => s + c.spent, 0);
+    const bar = (s,l) => `<div class="bar"><i class="${s>l?'over':''}" style="width:${Math.min(100, l ? s/l*100 : 0)}%"></i></div>`;
+    return monthBar() + (tl ? `<div class="card"><div class="row"><b>Все лимиты</b><span class="sp"></span><span>${rub(ts)} / ${rub(tl)}</span></div>${bar(ts,tl)}</div>` : '') +
+      `<div class="card"><h4>Лимиты по категориям</h4>${cats.sort((a,b) => (b.limit>0)-(a.limit>0) || b.spent-a.spent).map(c =>
+        `<div class="item" data-a="cat" data-id="${c.id}" style="display:block"><div class="row"><b>${esc(c.name)}</b><span class="sp"></span>
+        <span class="${c.limit>0&&c.spent>c.limit?'neg':''}">${rub(c.spent)}${c.limit>0 ? ' / '+rub(c.limit) : ''}</span></div>
+        ${c.limit>0 ? bar(c.spent,c.limit)+`<small>${c.spent>c.limit ? 'Перерасход '+rub(c.spent-c.limit) : 'Осталось '+rub(c.limit-c.spent)}</small>` : '<small>без лимита — нажми, чтобы задать</small>'}</div>`).join('')}</div>`;
+  },
+  rec() {
+    return `<div class="btns"><button data-a="recAdd">+ Регулярный платёж</button></div><div class="card">` +
+      (S.recurring.length ? S.recurring.map(r => `<div class="item" data-a="recEdit" data-id="${r.id}"><div><b>${esc(r.name)}</b><br>
+        <small>${esc(catName(r.cat))} · ${esc(accName(r.acc))} · следующий ${new Date(r.next).toLocaleDateString('ru-RU')}</small></div>
+        <span class="${r.type=='income'?'pos':'neg'}">${r.type=='income'?'+':'−'}${rub(r.amount)}</span></div>`).join('')
+        : '<small>Подписки, аренда, зарплата — будут добавляться сами раз в месяц</small>') + '</div>';
+  },
+  more() {
+    const cl = t => S.categories.filter(c => c.type == t).map(c => `<div class="item" data-a="cat" data-id="${c.id}"><b>${esc(c.name)}</b><small>${c.limit>0 ? 'лимит '+rub(c.limit) : ''}</small></div>`).join('');
+    return `<div class="card"><div class="row"><h4>Счета</h4><span class="sp"></span><button data-a="acc">+</button></div>
+        ${S.accounts.map(a => `<div class="item" data-a="acc" data-id="${a.id}"><b>${esc(a.name)}</b><span>${rub(balance(a))}</span></div>`).join('')}</div>
+      <div class="card"><div class="row"><h4>Категории расходов</h4><span class="sp"></span><button data-a="cat">+</button></div>${cl('expense')}</div>
+      <div class="card"><h4>Категории доходов</h4>${cl('income')}</div>
+      <div class="card"><h4>Семья</h4><small>Участники: ${esc(Object.values(house.names || {}).join(', '))}</small>
+        <p>Код семьи:<br><code>${hid}</code></p>
+        <div class="btns"><button data-a="copy">Скопировать код</button><button data-a="join">Ввести код</button></div>
+        <small>Отправь код партнёру: он входит под своим аккаунтом и жмёт «Ввести код».</small></div>
+      <div class="card"><h4>Экспорт</h4><div class="btns"><button data-a="csv">CSV</button><button data-a="xlsx">Excel</button></div></div>
+      <div class="card"><small>${esc(user.email)}</small><div class="btns" style="margin:10px 0 0"><button data-a="logout">Выйти</button></div></div>`;
+  }
+};
+
+let pend = false;
+function render() { if (pend) return; pend = true; requestAnimationFrame(() => { pend = false; draw(); }); }
+function draw() {
+  if (!user || !house) return;
+  charts.forEach(c => c.destroy()); charts = [];
+  document.querySelectorAll('nav button').forEach(b => b.classList.toggle('on', b.dataset.id == tab));
+  $('#app').innerHTML = V[tab]();
+  if (tab == 'home') drawCharts();
+}
+function drawCharts() {
+  Chart.defaults.color = '#8b9099'; Chart.defaults.borderColor = '#23262b';
+  const by = {}; monthTx().filter(t => t.type == 'expense').forEach(t => by[t.cat] = (by[t.cat] || 0) + t.amount);
+  const e = Object.entries(by).sort((a,b) => b[1] - a[1]);
+  if ($('#c1')) charts.push(new Chart($('#c1'), {type:'doughnut',
+    data:{labels:e.map(x => catName(x[0])), datasets:[{data:e.map(x => x[1]), backgroundColor:PAL, borderWidth:0}]},
+    options:{maintainAspectRatio:false, cutout:'65%', plugins:{legend:{position:'right'}}}}));
+  const ms = []; for (let i = 5; i >= 0; i--) ms.push(addM(month, -i));
+  const tot = type => ms.map(m => S.tx.filter(t => t.type == type && t.date.startsWith(m)).reduce((s,t) => s + t.amount, 0));
+  charts.push(new Chart($('#c2'), {type:'bar',
+    data:{labels:ms.map(m => new Date(m+'-01').toLocaleDateString('ru-RU',{month:'short'})),
+      datasets:[{label:'Доход', data:tot('income'), backgroundColor:'#4ade80', borderRadius:4},
+                {label:'Расход', data:tot('expense'), backgroundColor:'#f87171', borderRadius:4}]},
+    options:{maintainAspectRatio:false}}));
+}
+
+/* ---------- Формы ---------- */
+function form(title, fields, onSave, onDel) {
+  const d = $('#dlg');
+  d.innerHTML = `<form><h3>${esc(title)}</h3>` + fields.map(f => `<label>${esc(f.label)}` + (f.options
+      ? `<select name="${f.k}">${f.options.map(([v,l]) => `<option value="${esc(v)}"${v == f.value ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select>`
+      : `<input name="${f.k}" type="${f.type || 'text'}" value="${esc(f.value ?? '')}" ${f.type == 'number' ? `step="0.01" inputmode="decimal" ${f.min != null ? `min="${f.min}"` : ''}` : ''} ${f.opt ? '' : 'required'}>`) + '</label>').join('') +
+    `<div class="row">${onDel ? '<button type="button" class="danger" id="del">Удалить</button>' : ''}<span class="sp"></span>
+     <button type="button" class="ghost" id="cancel">Отмена</button><button class="primary">Сохранить</button></div></form>`;
+  d.querySelector('#cancel').onclick = () => d.close();
+  if (onDel) d.querySelector('#del').onclick = () => { if (confirm('Удалить?')) { onDel(); d.close(); } };
+  d.querySelector('form').onsubmit = e => {
+    e.preventDefault(); const v = {};
+    fields.forEach(f => { const x = e.target.elements[f.k].value; v[f.k] = f.type == 'number' ? (parseFloat(x) || 0) : x.trim(); });
+    onSave(v); d.close();
+  };
+  d.showModal();
+}
+const accOpts = () => S.accounts.map(a => [a.id, a.name]);
+
+function txForm(type, t) {
+  t = t || {date: today()};
+  const f = [{k:'amount', label:'Сумма, ₽', type:'number', min:0.01, value:t.amount},
+             {k:'acc', label: type == 'transfer' ? 'Со счёта' : 'Счёт', options:accOpts(), value:t.acc || localStorage.lastAcc}];
+  if (type == 'transfer') f.push({k:'to', label:'На счёт', options:accOpts(), value:t.to});
+  else f.push({k:'cat', label:'Категория', options:S.categories.filter(c => c.type == type).map(c => [c.id, c.name]), value:t.cat});
+  f.push({k:'date', label:'Дата', type:'date', value:t.date}, {k:'note', label:'Комментарий', value:t.note, opt:1});
+  form(TYPES[type], f, v => {
+    localStorage.lastAcc = v.acc;
+    if (t.id) col('tx').doc(t.id).update(v);
+    else col('tx').add({...v, type, by:user.uid, ts:Date.now()});
+  }, t.id && (() => col('tx').doc(t.id).delete()));
+}
+function recForm(r) {
+  r = r || {next: today()};
+  form('Регулярный платёж', [
+    {k:'name', label:'Название', value:r.name},
+    {k:'amount', label:'Сумма, ₽', type:'number', min:0.01, value:r.amount},
+    {k:'cat', label:'Категория', options:S.categories.map(c => [c.id, TYPES[c.type]+': '+c.name]), value:r.cat},
+    {k:'acc', label:'Счёт', options:accOpts(), value:r.acc},
+    {k:'next', label:'Следующий платёж (дальше — каждый месяц)', type:'date', value:r.next}
+  ], v => {
+    const data = {...v, type: S.categories.find(c => c.id == v.cat)?.type || 'expense', day: +v.next.slice(8), by: r.by || user.uid};
+    r.id ? col('recurring').doc(r.id).update(data) : col('recurring').add(data);
+  }, r.id && (() => col('recurring').doc(r.id).delete()));
+}
+
+/* ---------- Экспорт ---------- */
+function rows() {
+  return [['Дата','Тип','Сумма','Счёт','На счёт','Категория','Комментарий','Кто']].concat(
+    [...S.tx].sort((a,b) => a.date.localeCompare(b.date)).map(t => [t.date, TYPES[t.type], t.amount, accName(t.acc),
+      t.type == 'transfer' ? accName(t.to) : '', t.type == 'transfer' ? '' : catName(t.cat), t.note || '', house.names?.[t.by] || '']));
+}
+
+/* ---------- Действия ---------- */
+const A = {
+  tab(id) { tab = id; scrollTo(0,0); render(); },
+  shift(n) { month = addM(month, +n); render(); },
+  add(type) { txForm(type); },
+  edit(id) { const t = S.tx.find(x => x.id == id); if (t) txForm(t.type, t); },
+  acc(id) {
+    const a = S.accounts.find(x => x.id == id) || {};
+    form(a.id ? 'Счёт' : 'Новый счёт', [{k:'name', label:'Название', value:a.name}, {k:'start', label:'Начальный остаток, ₽', type:'number', value:a.start || 0}],
+      v => a.id ? col('accounts').doc(a.id).update(v) : col('accounts').add(v),
+      a.id && (() => col('accounts').doc(a.id).delete()));
+  },
+  cat(id) {
+    const c = S.categories.find(x => x.id == id) || {type:'expense'};
+    form(c.id ? 'Категория' : 'Новая категория', [{k:'name', label:'Название', value:c.name},
+      {k:'type', label:'Тип', options:[['expense','Расход'],['income','Доход']], value:c.type},
+      {k:'limit', label:'Лимит в месяц, ₽ (0 — без лимита)', type:'number', min:0, value:c.limit || 0}],
+      v => c.id ? col('categories').doc(c.id).update(v) : col('categories').add(v),
+      c.id && (() => col('categories').doc(c.id).delete()));
+  },
+  recAdd() { recForm(); },
+  recEdit(id) { recForm(S.recurring.find(x => x.id == id)); },
+  copy() { navigator.clipboard.writeText(hid).then(() => alert('Код скопирован')); },
+  async join() {
+    const code = (prompt('Код семьи от партнёра:') || '').trim();
+    if (!code || code == hid) return;
+    if (!confirm('Ты перейдёшь в общий бюджет. Твои текущие данные в нём не появятся. Продолжить?')) return;
+    try {
+      const ref = db.collection('households').doc(code);
+      if (!(await ref.get()).exists) throw Error('Код не найден');
+      await ref.update({members: firebase.firestore.FieldValue.arrayUnion(user.uid), ['names.'+user.uid]: user.displayName || user.email});
+      await db.collection('users').doc(user.uid).set({hid: code});
+      location.reload();
+    } catch (e) { alert(e.message); }
+  },
+  csv() {
+    const txt = rows().map(r => r.map(c => typeof c == 'number' ? String(c).replace('.', ',') : `"${String(c).replace(/"/g,'""')}"`).join(';')).join('\r\n');
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob(['\ufeff' + txt], {type:'text/csv;charset=utf-8'}));
+    a.download = `budget-${today()}.csv`; a.click();
+  },
+  xlsx() {
+    const go = () => { const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows()), 'Операции'); XLSX.writeFile(wb, `budget-${today()}.xlsx`); };
+    if (window.XLSX) return go();
+    const s = document.createElement('script'); s.src = 'https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js';
+    s.onload = go; s.onerror = () => alert('Нужен интернет для первой выгрузки в Excel'); document.head.append(s);
+  },
+  login() { authTry(auth.signInWithEmailAndPassword($('#em').value, $('#pw').value)); },
+  signup() { authTry(auth.createUserWithEmailAndPassword($('#em').value, $('#pw').value)); },
+  google() { authTry(auth.signInWithPopup(new firebase.auth.GoogleAuthProvider())); },
+  reset() { authTry(auth.sendPasswordResetEmail($('#em').value).then(() => { $('#err').textContent = 'Письмо для сброса отправлено'; })); },
+  logout() { auth.signOut(); }
+};
+document.addEventListener('click', e => {
+  const b = e.target.closest('[data-a]');
+  if (b && A[b.dataset.a]) A[b.dataset.a](b.dataset.id);
+});
+</script>
+</body>
+</html>
