@@ -62,14 +62,15 @@ code{background:#0e0f11;padding:4px 8px;border-radius:6px;word-break:break-all}
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <script>
-// ====== ВСТАВЬ СЮДА СВОЙ КОНФИГ ИЗ FIREBASE ======
+  
 const firebaseConfig = {
-  apiKey: "...",
-  authDomain: "...",
-  projectId: "...",
-  appId: "..."
+  apiKey: "AIzaSyD-cwe4ZC7ORDRiIuDT_YigJ7WvShLqMqE",
+  authDomain: "fbdeo-d2b04.firebaseapp.com",
+  projectId: "fbdeo-d2b04",
+  storageBucket: "fbdeo-d2b04.firebasestorage.app",
+  messagingSenderId: "771254149784",
+  appId: "1:771254149784:web:45be9d07f6a7c2347ae6ed"
 };
-// =================================================
 
 firebase.initializeApp(firebaseConfig);
 const auth = firebase.auth(), db = firebase.firestore();
